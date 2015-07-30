@@ -26,40 +26,36 @@
 #ne pas skipper les frames mais faire un systeme de lecture avec test de synchro sinon le son du VSE sera caca
 #en mode slave evaluer la clock a la fin de la boucle while 
 
-#faire sauver/charge de la liste des controlleurs en fichier text
-# memoriser les listes de properties et leur parametres sinon quand on reimport tout est perdu
-
 #pbm des properties list, qui peuvent se tester indirectement quand on leur envoi une mauvaise valeur. en MIDI impossible de donner une string.
 #bpy.types.Material.bl_rna.properties['diffuse_shader'].enum_items[0].name
 
-#le system physique rigid body + animation fait stopper le modal timer ? pas de bonne integration, pbm des scripts également
 # c quoi cette histoire de delta dans la norme midi
-#pbm des note_on =0 utilisé comme noteoff sur certains sequencer
-
-#attention avec le autorun, tester si le device MIDI existe bien car il est stoqué dans le .blend, si pas de device en creer un ?
-#faire que la prop autorun ne depende pas de la scene mais du .blend ?
-
-#enrichier la structure des keys, et faire que selon 7 ou 14 bit le numero de ctl soit borné differement.
-#gerer les RPN/NRPN 7 et 14 bit
+#pbm des note_on =0 utilisé comme noteoff sur certains sequenceurs
 
 #faire un parsing avant pour qu'en fonction de la liste de cont_type la grosse boucle ne teste que les classes de cont_type retenus par l'user.
 
+#sender les events
 #faut il tout le temps emmettre les valeurs ou juste quand changement, choix possible, mais ca serait plus logique.
 #faire attention à l'envoi que les valeur soient comprises entre 0 et 127
 
 #reiplementer le refresh et faire le test proposé cf. BArtists 
 #mettre une option debug pour les messages venant
 
+
 #Later:
 #break the script into several files
 #implement pitchbend ?
 #object per midi channel list of properties or by routing properties to object selection for user with some knobs ?
-#Import Midifiles facility using an external module ?
+#import Midifiles facility using an external module ?
+#(general question) why C.window_manager.midi_in_device cannot be referenced ?
+#(general question) why update function need or not self,context as arguments
+#(general question) why modal timer stop sometimes (see pbm with physics once), attach it to a window or not, pbm with CTRL+C in the console
+#(general question) hint for an operator when mouse pass over it, howto ?
 
 bl_info = {
     "name": "AddMIDI",
     "author": "JPfeP",
-    "version": (0, 3),
+    "version": (0, 4),
     "blender": (2, 6, 4),
     "location": "",
     "description": "MIDI for Blender",
@@ -74,7 +70,6 @@ from sys import exit
 from select import select
 from bpy.utils import register_module, unregister_module
 from bpy.app.handlers import persistent
-
 import time
 import rtmidi
 
@@ -86,6 +81,7 @@ running_status = 0
 startpos = 0
  
 MIDI_list_enum = []
+error_device = False
 
 #Creation of two MIDI ports
 midiin = rtmidi.MidiIn()
@@ -106,6 +102,7 @@ def set_midiin(port):
     midiin = rtmidi.MidiIn()
     midiin.open_port(name=port)
 
+
 def set_midiout(port):
     global midiout
     midiout.close_port()
@@ -113,6 +110,34 @@ def set_midiout(port):
     midiout = rtmidi.MidiOut()
     midiout.open_port(name=port)
 
+
+def upd_settings_sub(n):
+    text_settings = None
+    for text in bpy.data.texts:
+        if text.name == '.addmidi_settings':
+            text_settings = text
+    if text_settings == None:
+        bpy.ops.text.new()
+        text_settings = bpy.data.texts[-1]
+        text_settings.name = '.addmidi_settings'   
+        text_settings.write("\n\n\n\n")
+    if n==0:
+        text_settings.lines[0].body = str(int(bpy.context.window_manager.autorun))
+    elif n==1:
+        text_settings.lines[1].body = bpy.context.window_manager.midi_in_device
+    elif n==2:
+        text_settings.lines[2].body = bpy.context.window_manager.midi_out_device
+
+def upd_setting_0():
+    upd_settings_sub(0)
+    
+def upd_setting_1():
+    upd_settings_sub(1)
+        
+def upd_setting_2():
+    upd_settings_sub(2)
+        
+  
 
 class AddMIDI_ModalTimer(bpy.types.Operator):
     '''MIDI Sync for Blender VSE (slave)'''
@@ -133,7 +158,11 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
         
         beatframe = (60/tempo)*fps              
         
-       
+        #This for applying the scale given by the user for each key
+        def rescale(val,min,max,quant):
+            result = (val/quant) * (max - min) + min
+            return str(result)
+        
         if event.type == 'TIMER':	
             timer = time.time()	  
             
@@ -167,34 +196,10 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
             
                 #For the MIDI controllers
                 for item in bpy.context.scene.MIDI_keys:
-                    result_message2 = (message[2]/127) * (item.max - item.min) + item.min
-                    result_message1 = (message[1]/127) * (item.max - item.min) + item.min
+                    #result_message2 = (message[2]/127) * (item.max - item.min) + item.min
+                    #result_message1 = (message[1]/127) * (item.max - item.min) + item.min
                     
-                    
-                    ''' Old code
-                    #pour CC 7bit
-                    if (message[0]-175) == item.channel and message[1] == item.controller:
-                        strtoexec = "bpy.data."+item.name + "=" + str(result_message2)
-                        exec(strtoexec) 
-                    
-                    #for RPN
-                    a = message[0]-175 #the channel
-                    b = message[1]     #the controler number
-                    c = message[2]     #the value
-                    
-                    elif b == 6 :
-                        CC_6[a] = c
-                    
-                    elif b == 38 :
-                        CC_38[a] = c                   
-                                                                           
-                    elif b == 101 :
-                        CC_101[a] = c
-                    
-                    elif b == 100 :
-                        if CC_101[a]*127 + c*107 == item.controller and message[a]
-                    '''
-                    
+  
                     #New code for CC_7 and CC_14
                     chan = message[0]-175
                     cc   = message[1]
@@ -205,35 +210,40 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                         
                         #For classic CC_7
                         if cc == item.controller: 
-                            strtoexec = "bpy.data."+item.name + "=" + str(result_message2)
+                            strtoexec = "bpy.data."+item.name + "=" + rescale(message[2],item.min,item.max,127)
                             exec(strtoexec)
-                        
-                        
+                                                
                         elif cc == 6 :
                             CC_6[chan] = val
-                            #CC_38[chan] = 0
+
                         elif cc == 38 :
                             CC_38[chan] = val
+                        
                         #For NRPN
                         elif cc == 99:
                             CC_99[chan] = val
                         elif cc == 98:
-                            if CC_99[chan]*127 + val == item.controller and item.cont_type == 'nrpn14':
-                                strtoexec = "bpy.data."+item.name + "=" + str(CC_6[chan]*127 + CC_38[chan])
+                            if CC_99[chan]*127 + val == item.controller14:
+                                if  item.cont_type == 'nrpn14':
+                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan]*127 + CC_38[chan],item.min,item.max,16384)
+                                elif item.cont_type == 'nrpn':
+                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan],item.min,item.max,127)
                                 exec(strtoexec)
+                        
                         #For RPN
                         elif cc == 101:
                             CC_101[chan] = val
                         elif cc == 100:
-                            if CC_101[chan]*127 + val == item.controller and item.cont_type == 'rpn14':
-                                strtoexec = "bpy.data."+item.name + "=" + str(CC_6[chan]*127 + CC_38[chan])
-                                exec(strtoexec)
-           
+                            if CC_101[chan]*127 + val == item.controller14: 
+                                if item.cont_type == 'rpn14':
+                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan]*127 + CC_38[chan],item.min,item.max,16384)
+                                elif item.cont_type == 'rpn':
+                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan],item.min,item.max,127) 
+                                exec(strtoexec)    
                     
                     #for the notes on
                     elif (message[0]-143) == item.channel and message[2] != 0:
-                        strtoexec = "bpy.data."+item.name + "=" + str(result_message1)
-                        #print(strtoexec)
+                        strtoexec = "bpy.data."+item.name + "=" + rescale(message[1],item.min,item.max,127)
                         exec(strtoexec)
                 
                 
@@ -286,28 +296,14 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
         return {'CANCELLED'}
 
 
-def init_settings():
-    #Checking if a hidden text already exists for our settings
-    text_settings = None
-    for text in bpy.data.texts:
-        if text.name != '.addmidi_settings':
-            text_settings = text
-    if text_settings == None:
-        bpy.ops.text.new()
-        text_settings = bpy.data.texts[-1]
-        text_settings.name = '.addmidi_settings'
-    bpy.types.Text.my_string = bpy.props.StringProperty(default="plop")
-
+    
+    
 class AddMIDI_UIPanel(bpy.types.Panel):
     bl_label = "AddMIDI"
     bl_space_type = "VIEW_3D"
     bl_region_type = "TOOLS"
     bl_category = "AddMIDI"
-   
-    
-
- 
-    
+       
     def draw(self, context):
         layout = self.layout
         col = layout.column(align=True)
@@ -316,13 +312,13 @@ class AddMIDI_UIPanel(bpy.types.Panel):
         row.operator("addmidi.start", text='Start')
         row.operator("addmidi.stop", text='Stop')
         layout.prop(bpy.context.window_manager, "addmidi_running")
-        layout.prop(bpy.context.scene , "midi_in_device", text="Midi In")
-        layout.prop(bpy.context.scene , "midi_out_device", text="Midi Out")
-        layout.prop(bpy.context.scene , "autorun", text="Start at launch")
-        layout.prop(bpy.data.texts[0], "my_string")
-        
+        layout.prop(bpy.context.window_manager , "midi_in_device", text="Midi In")
+        layout.prop(bpy.context.window_manager , "midi_out_device", text="Midi Out")
+        layout.prop(bpy.context.window_manager , "autorun", text="Start at launch")
         layout.separator()
-        layout.operator("addmidi.importks", text='Import Keying Set')        
+        layout.operator("addmidi.importks", text='Import Keying Set')   
+        layout.operator("addmidi.list2text", text='Save list as text')
+        layout.operator("addmidi.text2list", text='Import keys from text')       
         layout.separator()
         for item in bpy.context.scene.MIDI_keys:
             row = layout.row()
@@ -331,31 +327,39 @@ class AddMIDI_UIPanel(bpy.types.Panel):
             box.prop(item, 'channel')
             box.prop(item, 'cont_type')
             if item.cont_type != 'note_off' and item.cont_type != 'note_on' and item.cont_type != 'vel':
-                box.prop(item, 'controller')
+                if item.cont_type == 'rpn14' or item.cont_type == 'nrpn14':
+                    box.prop(item, 'controller14')
+                else:
+                    box.prop(item, 'controller')
             box.prop(item, 'min')
             box.prop(item, 'max')
 
-    bpy.types.WindowManager.autorun = bpy.props.BoolProperty()
+    def upd_trick(self,context):
+        upd_setting_0()
+    
+    bpy.types.WindowManager.autorun = bpy.props.BoolProperty(update=upd_trick)
     
     def upd_midiin(self, context):     
-        set_midiin(bpy.context.scene.midi_in_device)
+        set_midiin(bpy.context.window_manager.midi_in_device)
+        upd_setting_1()
     
     def upd_midiout(self, context):
-        set_midiout(bpy.context.scene.midi_out_device)
-    
+        set_midiout(bpy.context.window_manager.midi_out_device)
+        upd_setting_2()
+        
     b=[]
     for i in midiin.get_ports():
         a = (i,i,i)
         b.append(a)
     obj_types_enum = b
-    bpy.types.Scene.midi_in_device = bpy.props.EnumProperty(name="MIDI In Ports", items=obj_types_enum, update=upd_midiin)
+    bpy.types.WindowManager.midi_in_device = bpy.props.EnumProperty(name="MIDI In Ports", items=obj_types_enum, update=upd_midiin)
     
     b=[]
     for i in midiout.get_ports():
         a = (i,i,i)
         b.append(a)
     obj_types_enum = b
-    bpy.types.Scene.midi_out_device = bpy.props.EnumProperty(name = "MIDI Out Ports", items = obj_types_enum, update=upd_midiout)
+    bpy.types.WindowManager.midi_out_device = bpy.props.EnumProperty(name = "MIDI Out Ports", items = obj_types_enum, update=upd_midiout)
              
         
 class AddMIDI_StartButton(bpy.types.Operator):
@@ -365,8 +369,8 @@ class AddMIDI_StartButton(bpy.types.Operator):
     def execute(self, context):
         if bpy.context.window_manager.addmidi_running != "Running":
             self.report({'INFO'}, "Starting MIDI...")
-            set_midiin(bpy.context.scene.midi_in_device)
-            set_midiout(bpy.context.scene.midi_out_device)
+            set_midiin(bpy.context.window_manager.midi_in_device)
+            set_midiout(bpy.context.window_manager.midi_out_device)
             bpy.ops.addmidi.modal_timer_operator()
         else:
             self.report({'INFO'}, "Already running !")
@@ -379,19 +383,109 @@ class AddMIDI_StopButton(bpy.types.Operator):
     def execute(self, context):
         bpy.ops.addmidi.modal_timer_operator('CANCEL_DEFAULT')
         return{'FINISHED'}
+
+class AddMIDI_list_as_text(bpy.types.Operator):
+    bl_idname = "addmidi.list2text"
+    bl_label = "Save a list of keys as text"
+     
+    def execute(self, context):
+        #Check if our text file already exists if not create it
+        text = None
+        for t in bpy.data.texts:
+            if t.name == 'AddMIDI_items_list':
+                text = t
+                text.clear()
+        if text == None:
+            bpy.ops.text.new()
+            text = bpy.data.texts[-1]
+            text.name = 'AddMIDI_items_list'
+        
+        #Serialize the data
+        for item in bpy.context.scene.MIDI_keys:
+            text.write(item.name+"\n")
+            text.write(str(item.channel)+"\n")
+            text.write(item.cont_type+"\n")
+            if item.cont_type != 'note_off' and item.cont_type != 'note_on' and item.cont_type != 'vel':
+                if item.cont_type == 'rpn14' or item.cont_type == 'nrpn14':
+                    text.write(str(item.controller14)+"\n")
+                else:
+                    text.write(str(item.controller)+"\n")
+            text.write(str(item.min)+"\n")
+            text.write(str(item.max)+"\n")
+            text.write("\n")
+        
+        return{'FINISHED'}
+
     
+class AddMIDI_text_to_list(bpy.types.Operator):
+    bl_idname = "addmidi.text2list"
+    bl_label = "Import keys from text"
+    
+    def execute(self, context):
+        #Check if our text file already exists if not warn and quit
+        text_items_list = None
+        for t in bpy.data.texts:
+            if t.name == 'AddMIDI_items_list':
+                text_items_list = t
+        if text_items_list == None:
+            self.report({'INFO'}, "Missing Text File !")
+            return{'FINISHED'}
+        
+        #Parse the file
+        bpy.context.scene.MIDI_keys.clear()
+        counter = 0
+        for l in text_items_list.lines:
+            #Counter reset
+            if l.body == '':
+                counter = 0
+            #Property Name    
+            if counter == 0 and l.body != '':
+                keys_list = bpy.context.scene.MIDI_keys.add()
+                keys_list.name = l.body
+                counter = counter + 1
+            #Channel
+            elif counter == 1:
+                keys_list.channel = int(l.body)
+                counter = counter + 1
+            #Property type
+            elif counter == 2:
+                keys_list.cont_type = l.body
+                if l.body == 'note_off' or l.body == 'note_on' or l.body == 'vel':
+                    counter = counter + 2
+                else:
+                    counter = counter + 1   
+            #Controller value
+            elif counter == 3:
+                if keys_list.cont_type == 'rpn14' or keys_list.cont_type == 'nrpn14':
+                    keys_list.controller14 = int(l.body)
+                else:
+                    keys_list.controller = int(l.body)
+                counter = counter + 1
+            #Min
+            elif counter == 4:  
+                keys_list.min = int(l.body)
+                counter = counter + 1
+            #Max
+            elif counter == 5:  
+                keys_list.max = int(l.body)
+                counter = counter + 1                
+           
+                
+        return{'FINISHED'}
+            
 
 class AddMIDI_Import_KS_button(bpy.types.Operator):
     bl_idname = "addmidi.importks"
-    bl_label = "Import Keying Set for AddMIDI"   
-    
-   
+    bl_label  = "Import Keying Set for AddMIDI" 
+       
     list = (('note_on','note_on',''),
             ('note_off','note_off',''),
             ('vel','velocity','',),
-            ('aft','aftertouch','',),
+            #('aft','aftertouch','',),
             ('cc7','continous controller 7bit','',),
-            ('rpn14','RPN 14bit','',),
+            ('rpn','RPN 7bit','',),
+            ('rpn14','RPN 14 bit','',),
+            ('nrpn7','RPN 7bit','',),
             ('nrpn14','NRPN 14 bit','',),
             ('','','',))
                           
@@ -401,9 +495,10 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
     class SceneSettingItem(bpy.types.PropertyGroup):
         name = bpy.props.StringProperty(name="Key", default="Unknown")
         channel = bpy.props.IntProperty(name="Channel", min=1, max=16, default=1)
-        controller = bpy.props.IntProperty(name="Controller number", min=1, default=1)
+        controller = bpy.props.IntProperty(name="Controller number", min=1, max=128, default=1)
+        controller14 = bpy.props.IntProperty(name="Controller number", min=1, max=16384, default=1)
         min = bpy.props.IntProperty(name="Min", default=0)
-        max = bpy.props.IntProperty(name="Max", default=100)
+        max = bpy.props.IntProperty(name="Max", default=127)
         cont_type = bpy.props.EnumProperty(name = "Controller type", items = MIDI_list_enum)
     bpy.utils.register_class(SceneSettingItem) #necessary ?
     
@@ -412,7 +507,7 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
     def execute(self, context):
  
         ks = bpy.context.scene.keying_sets.active
-        my_item = bpy.context.scene.MIDI_keys.clear()
+        bpy.context.scene.MIDI_keys.clear()
         tvar2 = ""
         id_n = 0
 
@@ -425,8 +520,7 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
                          
                     else:
                         tvar = repr(items.id)[9:] + "." + items.data_path
-                       
-                    
+                                           
                     tvar_ev = "bpy.data." + tvar
                                   
                     if repr(type(eval(tvar_ev)))!="<class 'str'>":
@@ -449,11 +543,7 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
                         my_item = bpy.context.scene.MIDI_keys.add()
                         my_item.name = i
                         tvar2 = ""
-                        #my_item.ID = id_n
-                        #id_n += 1
-                        #my_item.address = bpy.context.scene.defaultaddr 
-                        #my_item.osc_type = repr(type(eval("bpy.data."+i)))[8:-2]
-                        print("Imported keys:\n"+i)
+                        print("AddMIDI -- Imported keys:\n"+i)
                 else:
                     self.report({'INFO'}, "Missing ID block !")
                                                          
@@ -462,14 +552,29 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
         
         return{'FINISHED'}        
 
-  
-
+#Restore saved settings
 @persistent
 def addmidi_handler(scene):
-    autorun = bpy.context.scene.autorun
-    if autorun == True:
-        bpy.ops.addmidi.start()
-    init_settings()
+    global error_device
+    for text in bpy.data.texts:
+        if text.name == '.addmidi_settings':
+            bpy.context.window_manager.autorun = int(text.lines[0].body)
+            try:
+                bpy.context.window_manager.midi_in_device  = text.lines[1].body
+            except:
+                error_device = True
+                print("AddMIDI Error: MIDI In device not found")
+            try:
+                bpy.context.window_manager.midi_out_device = text.lines[2].body
+            except:
+                error_device = True
+                print("AddMIDI Error: MIDI Out device not found")
+            
+            if error_device == True:
+                bpy.context.window_manager.autorun = False
+
+            if bpy.context.window_manager.autorun == True:
+                bpy.ops.addmidi.start()    
 
 def register():
     bpy.utils.register_module(__name__)
