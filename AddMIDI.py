@@ -31,16 +31,20 @@
 
 # c quoi cette histoire de delta dans la norme midi
 #pbm des note_on =0 utilisé comme noteoff sur certains sequenceurs
+#send null rpn/nrpn 127/127 ?
+
+#en cas de rewind flusher le tableau MIDI_sent_values ?
 
 #faire un parsing avant pour qu'en fonction de la liste de cont_type la grosse boucle ne teste que les classes de cont_type retenus par l'user.
-
-#sender les events
-#faut il tout le temps emmettre les valeurs ou juste quand changement, choix possible, mais ca serait plus logique.
-#faire attention à l'envoi que les valeur soient comprises entre 0 et 127
 
 #reiplementer le refresh et faire le test proposé cf. BArtists 
 #mettre une option debug pour les messages venant
 
+#stop button foire
+
+#tester si min - max = 0 ou negatif ?
+
+#refresh la liste des ports midi 
 
 #Later:
 #break the script into several files
@@ -55,7 +59,7 @@
 bl_info = {
     "name": "AddMIDI",
     "author": "JPfeP",
-    "version": (0, 4),
+    "version": (0, 5),
     "blender": (2, 6, 4),
     "location": "",
     "description": "MIDI for Blender",
@@ -72,6 +76,7 @@ from bpy.utils import register_module, unregister_module
 from bpy.app.handlers import persistent
 import time
 import rtmidi
+from rtmidi.midiutil import open_midiport                                                                                                                                   
 
 #Some global variables
 tempo = 120
@@ -81,6 +86,7 @@ running_status = 0
 startpos = 0
  
 MIDI_list_enum = []
+MIDI_sent_values = [0 for i in range(1000)]
 error_device = False
 
 #Creation of two MIDI ports
@@ -105,10 +111,9 @@ def set_midiin(port):
 
 def set_midiout(port):
     global midiout
-    midiout.close_port()
+    #midiout.close_port()
     midiout = None
-    midiout = rtmidi.MidiOut()
-    midiout.open_port(name=port)
+    midiout, plop = open_midiport(port=port, type_="output")
 
 
 def upd_settings_sub(n):
@@ -136,8 +141,10 @@ def upd_setting_1():
         
 def upd_setting_2():
     upd_settings_sub(2)
-        
-  
+
+#This to limit the sent values in a proper range
+def clamp(minimum, x, maximum):
+    return max(minimum, min(x, maximum))        
 
 class AddMIDI_ModalTimer(bpy.types.Operator):
     '''MIDI Sync for Blender VSE (slave)'''
@@ -147,7 +154,7 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
     _timer = None 
     
     bpy.types.WindowManager.addmidi_running = bpy.props.StringProperty(default="Stopped")
-        
+            
     def modal(self, context, event):
         
         global tempo
@@ -166,12 +173,12 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
         if event.type == 'TIMER':	
             timer = time.time()	  
             
-            #Receiving 
+            ###################################RECEIVING######################################## 
             msg = midiin.get_message()
             while msg != None:
                 message, deltatime = msg
                 timer += deltatime
-                print("@%0.6f %r" % (timer, message))
+                print("In :"+"@%0.6f %r" % (timer, message))
                 
                 msg = midiin.get_message()   #why this line is necessary (if not, infinite loop) ?
                 
@@ -193,13 +200,11 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                     frame = locbeat * beatframe
                     bpy.data.scenes["Scene"].frame_set(frame)
                     print ('JUMP TO FRAME ',frame)
-            
+                
+               
                 #For the MIDI controllers
                 for item in bpy.context.scene.MIDI_keys:
-                    #result_message2 = (message[2]/127) * (item.max - item.min) + item.min
-                    #result_message1 = (message[1]/127) * (item.max - item.min) + item.min
-                    
-  
+
                     #New code for CC_7 and CC_14
                     chan = message[0]-175
                     cc   = message[1]
@@ -225,10 +230,11 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                         elif cc == 98:
                             if CC_99[chan]*127 + val == item.controller14:
                                 if  item.cont_type == 'nrpn14':
-                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan]*127 + CC_38[chan],item.min,item.max,16384)
+                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan]*127 + CC_38[chan],item.min,item.max,16383)
+                                    exec(strtoexec)
                                 elif item.cont_type == 'nrpn':
                                     strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan],item.min,item.max,127)
-                                exec(strtoexec)
+                                    exec(strtoexec)
                         
                         #For RPN
                         elif cc == 101:
@@ -236,10 +242,11 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                         elif cc == 100:
                             if CC_101[chan]*127 + val == item.controller14: 
                                 if item.cont_type == 'rpn14':
-                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan]*127 + CC_38[chan],item.min,item.max,16384)
+                                    strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan]*127 + CC_38[chan],item.min,item.max,16383)
+                                    exec(strtoexec)
                                 elif item.cont_type == 'rpn':
                                     strtoexec = "bpy.data."+item.name + "=" + rescale(CC_6[chan],item.min,item.max,127) 
-                                exec(strtoexec)    
+                                    exec(strtoexec)    
                     
                     #for the notes on
                     elif (message[0]-143) == item.channel and message[2] != 0:
@@ -248,9 +255,9 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                 
                 
             
-            if running_status == 1:
-                frame = startpos + (clock / 48) * fps 
-                bpy.ops.screen.animation_play()
+            #if running_status == 1:
+                #frame = startpos + (clock / 48) * fps 
+                #bpy.ops.screen.animation_play()
                 #bpy.data.scenes["Scene"].frame_set(frame)
                 #print(clock,frame)
             #print(running_status, clock)
@@ -267,21 +274,76 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
            
          
             
-            '''
-            #For sending values
-            for item in  bpy.context.scene.MIDI_keys:
-                chan = item.channel + 175 #  1011nnnn = 176 to 191 from the midi specs and -1 since we don't say channel 0
-                cont = item.controller
-                diff = item.max - item.min
-                diff2 = eval("bpy.data."+item.name) - item.min
-                value = int( (diff2 / diff) * 127) 
-                midiout.send_message([chan,cont,value])
-            '''
- 
+         
+            ###########################SENDING###############################################
+            counter = 0
+            for item in bpy.context.scene.MIDI_keys:
+                prop = eval("bpy.data."+item.name)
+                if prop != MIDI_sent_values[counter]:
+                    if item.cont_type == 'cc7':
+                        chan = item.channel + 175 #  1011nnnn = 176 to 191 from the midi specs and -1 since we don't say channel 0
+                        cont = item.controller
+                        diff = item.max - item.min
+                        diff2 = prop - item.min
+                        value = clamp(0,int( (diff2 / diff) * 127),127) 
+                        midiout.send_message([chan,cont,value])
             
+                    elif item.cont_type == 'rpn':
+                        chan = item.channel + 175 #  1011nnnn = 176 to 191 from the midi specs and -1 since we don't say channel 0
+                        cont_101 = int(item.controller14 / 128)
+                        cont_100 = item.controller14 % 128
+                        diff = item.max - item.min
+                        diff2 = prop - item.min
+                        value = clamp(0,int((diff2 / diff) * 127),127) 
+                        midiout.send_message([chan,100,cont_101])
+                        midiout.send_message([chan,101,cont_100])
+                        midiout.send_message([chan,6,value])
+                                              
+                    elif item.cont_type == 'nrpn':
+                        chan = item.channel + 175 #  1011nnnn = 176 to 191 from the midi specs and -1 since we don't say channel 0
+                        cont_99 = int(item.controller14 / 128)
+                        cont_98 = item.controller14 % 128
+                        diff = item.max - item.min
+                        diff2 = prop - item.min
+                        value = clamp(0,int((diff2 / diff) * 127),127) 
+                        midiout.send_message([chan,99,cont_99])
+                        midiout.send_message([chan,98,cont_98])
+                        midiout.send_message([chan,6,value])
+
+                    elif item.cont_type == 'rpn14':
+                        chan = item.channel + 175 #  1011nnnn = 176 to 191 from the midi specs and -1 since we don't say channel 0
+                        cont_101 = int(item.controller14 / 128)
+                        cont_100 = item.controller14 % 128
+                        diff = item.max - item.min
+                        diff2 = prop - item.min
+                        value    = clamp(0,int( (diff2 / diff) * 16383),16383) 
+                        print (str(value))
+                        value_6  = int (value / 127)
+                        value_38 = value % 127
+                        midiout.send_message([chan,100,cont_101])
+                        midiout.send_message([chan,101,cont_100])
+                        midiout.send_message([chan,6,value_6])                                              
+                        midiout.send_message([chan,38,value_38])    
+                                              
+                    elif item.cont_type == 'nrpn14':
+                        chan = item.channel + 175 #  1011nnnn = 176 to 191 from the midi specs and -1 since we don't say channel 0
+                        cont_99 = int(item.controller14 / 128)
+                        cont_98 = item.controller14 % 128
+                        diff = item.max - item.min
+                        diff2 = prop - item.min
+                        value    = clamp(0,int( (diff2 / diff) * 16383),16383) 
+                        value_6  = int (value / 127)
+                        value_38 = value % 127
+                        midiout.send_message([chan,99,cont_99])
+                        midiout.send_message([chan,98,cont_98])
+                        midiout.send_message([chan,6,value_6])                                              
+                        midiout.send_message([chan,38,value_38])  
+                                  
+                                                                                           
+                MIDI_sent_values[counter] = prop    
+                counter = counter + 1
              
         return {'PASS_THROUGH'}            
-
 
 
     def execute(self, context):
@@ -294,9 +356,7 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
         context.window_manager.event_timer_remove(self._timer)
         context.window_manager.addmidi_running = "Stopped"
         return {'CANCELLED'}
-
-
-    
+  
     
 class AddMIDI_UIPanel(bpy.types.Panel):
     bl_label = "AddMIDI"
@@ -311,14 +371,16 @@ class AddMIDI_UIPanel(bpy.types.Panel):
         row = col.row(align=True)
         row.operator("addmidi.start", text='Start')
         row.operator("addmidi.stop", text='Stop')
-        layout.prop(bpy.context.window_manager, "addmidi_running")
+        layout.prop(bpy.context.window_manager, "addmidi_running", text="Status")
         layout.prop(bpy.context.window_manager , "midi_in_device", text="Midi In")
         layout.prop(bpy.context.window_manager , "midi_out_device", text="Midi Out")
         layout.prop(bpy.context.window_manager , "autorun", text="Start at launch")
         layout.separator()
         layout.operator("addmidi.importks", text='Import Keying Set')   
-        layout.operator("addmidi.list2text", text='Save list as text')
-        layout.operator("addmidi.text2list", text='Import keys from text')       
+        col2 = layout.column(align=True)
+        row2 = col2.row(align=True)
+        row2.operator("addmidi.list2text", text='Save list as text')
+        row2.operator("addmidi.text2list", text='Import keys from text')       
         layout.separator()
         for item in bpy.context.scene.MIDI_keys:
             row = layout.row()
@@ -331,8 +393,10 @@ class AddMIDI_UIPanel(bpy.types.Panel):
                     box.prop(item, 'controller14')
                 else:
                     box.prop(item, 'controller')
-            box.prop(item, 'min')
-            box.prop(item, 'max')
+            col3 = box.column(align=True)
+            row3 = col3.row(align=True)
+            row3.prop(item, 'min')
+            row3.prop(item, 'max')
 
     def upd_trick(self,context):
         upd_setting_0()
@@ -375,6 +439,7 @@ class AddMIDI_StartButton(bpy.types.Operator):
         else:
             self.report({'INFO'}, "Already running !")
         return{'FINISHED'}
+
     
 class AddMIDI_StopButton(bpy.types.Operator):
     bl_idname = "addmidi.stop"
@@ -383,6 +448,7 @@ class AddMIDI_StopButton(bpy.types.Operator):
     def execute(self, context):
         bpy.ops.addmidi.modal_timer_operator('CANCEL_DEFAULT')
         return{'FINISHED'}
+
 
 class AddMIDI_list_as_text(bpy.types.Operator):
     bl_idname = "addmidi.list2text"
@@ -434,42 +500,47 @@ class AddMIDI_text_to_list(bpy.types.Operator):
         #Parse the file
         bpy.context.scene.MIDI_keys.clear()
         counter = 0
-        for l in text_items_list.lines:
-            #Counter reset
-            if l.body == '':
-                counter = 0
-            #Property Name    
-            if counter == 0 and l.body != '':
-                keys_list = bpy.context.scene.MIDI_keys.add()
-                keys_list.name = l.body
-                counter = counter + 1
-            #Channel
-            elif counter == 1:
-                keys_list.channel = int(l.body)
-                counter = counter + 1
-            #Property type
-            elif counter == 2:
-                keys_list.cont_type = l.body
-                if l.body == 'note_off' or l.body == 'note_on' or l.body == 'vel':
-                    counter = counter + 2
-                else:
-                    counter = counter + 1   
-            #Controller value
-            elif counter == 3:
-                if keys_list.cont_type == 'rpn14' or keys_list.cont_type == 'nrpn14':
-                    keys_list.controller14 = int(l.body)
-                else:
-                    keys_list.controller = int(l.body)
-                counter = counter + 1
-            #Min
-            elif counter == 4:  
-                keys_list.min = int(l.body)
-                counter = counter + 1
-            #Max
-            elif counter == 5:  
-                keys_list.max = int(l.body)
-                counter = counter + 1                
-           
+        try:
+            for l in text_items_list.lines:
+                #Counter reset
+                if l.body == '':
+                    counter = 0
+                #Property Name    
+                if counter == 0 and l.body != '':
+                    keys_list = bpy.context.scene.MIDI_keys.add()
+                    keys_list.name = l.body
+                    counter = counter + 1
+                #Channel
+                elif counter == 1:
+                    keys_list.channel = int(l.body)
+                    counter = counter + 1
+                #Property type
+                elif counter == 2:
+                    keys_list.cont_type = l.body
+                    if l.body == 'note_off' or l.body == 'note_on' or l.body == 'vel':
+                        counter = counter + 2
+                    else:
+                        counter = counter + 1   
+                #Controller value
+                elif counter == 3:
+                    if keys_list.cont_type == 'rpn14' or keys_list.cont_type == 'nrpn14':
+                        keys_list.controller14 = int(l.body)
+                    else:
+                        keys_list.controller = int(l.body)
+                    counter = counter + 1
+                #Min
+                elif counter == 4:  
+                    keys_list.min = int(l.body)
+                    counter = counter + 1
+                #Max
+                elif counter == 5:  
+                    keys_list.max = int(l.body)
+                    counter = counter + 1      
+                #Try to catch some errors
+                elif counter > 5:
+                    raise ValueError('Invalid section found')
+        except:
+            self.report({'INFO'}, "Error found !")
                 
         return{'FINISHED'}
             
@@ -485,7 +556,7 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
             ('cc7','continous controller 7bit','',),
             ('rpn','RPN 7bit','',),
             ('rpn14','RPN 14 bit','',),
-            ('nrpn7','RPN 7bit','',),
+            ('nrpn','NRPN 7bit','',),
             ('nrpn14','NRPN 14 bit','',),
             ('','','',))
                           
@@ -513,7 +584,7 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
 
         if str(ks) != "None":
             for items in ks.paths:               
-                if str(items.id) != "None":     #workaround to avoid bad ID Block (Nodes)
+                if str(items.id) != "None":     #workaround to avoid bad ID Block (bug with Nodes)
                     
                     if items.data_path[0:2] == '["' and items.data_path[-2:] == '"]':
                         tvar = repr(items.id)[9:] + items.data_path
