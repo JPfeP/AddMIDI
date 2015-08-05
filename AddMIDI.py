@@ -378,7 +378,6 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
     def cancel(self, context):
         context.window_manager.event_timer_remove(self._timer)
         context.window_manager.addmidi_running = "Stopped"
-        return {'CANCELLED'}
   
     
 class AddMIDI_UIPanel(bpy.types.Panel):
