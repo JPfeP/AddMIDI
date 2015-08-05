@@ -22,34 +22,27 @@
 
 #TODO
 
-#MIDI SYNC
-#ne pas skipper les frames mais faire un systeme de lecture avec test de synchro sinon le son du VSE sera caca
-#en mode slave evaluer la clock a la fin de la boucle while 
-
-#finir implementation de la velocity
-#pbm des note_on =0 utilisé comme noteoff sur certains sequenceurs
-
-#In :@1438713555.874383 [192, 22]  pbm  val  = message[2]  list index out of range
-
-#reiplementer le refresh et faire le test proposé cf. BArtists ? 
-#mettre une option debug console pour les event
-
-#pourquoi midiout merde avec la methode bas niveau
-#ameliorer le refresh de la liste des ports midi, bugs, on veux pas les rtmidi visibles 
-
 #------------------For next release:-----------------
-#faire un parsing avant pour qu'en fonction de la liste de cont_type la grosse boucle ne teste que les classes de cont_type retenus par l'user.
+#ameliorer le refresh de la liste des ports midi, cacher les rtmidi visibles 
 
-#en cas de rewind flusher le tableau MIDI_sent_values ? mettre un frame handler ?
+#send Note events from Blender
 
-#pbm des properties list, qui peuvent se tester indirectement quand on leur envoi une mauvaise valeur. en MIDI impossible de donner une string.
-#bpy.types.Material.bl_rna.properties['diffuse_shader'].enum_items[0].name
+#faire un parsing pour qu'en fonction de la liste de cont_type la boucle ne teste que les classes d'events retenues par l'user.
+
+#en cas de rewind flusher le tableau MIDI_sent_values ? mettre un frame handler ? Potential pbm with loop, defacto midi thru
+
+#pbm des properties list, qui peuvent se tester qu'indirectement quand on leur envoi une mauvaise valeur. en MIDI impossible de donner une string.
+#ou alors avec bl_rna, par exemple: bpy.types.Material.bl_rna.properties['diffuse_shader'].enum_items[0].name
 
 #------------------Later:----------------------------
+#MIDI SYNC
+#ne pas skipper les frames mais faire un systeme de lecture avec test de synchro sinon le son du VSE sera caca
+#en mode slave evaluer la clock a la fin de la boucle while  
+
 #send null rpn/nrpn 127/127 ?
 #monotoring the values in the GUI with a switch
 #break the script into several files
-#implement pitchbend ?
+#implement program change and pitchbend ?
 #object per midi channel list of properties or by routing properties to object selection for user with some knobs ?
 #import Midifiles facility using an external module ?
 #(general question) why C.window_manager.midi_in_device cannot be referenced ?
@@ -60,12 +53,12 @@
 bl_info = {
     "name": "AddMIDI",
     "author": "JPfeP",
-    "version": (0, 6),
-    "blender": (2, 6, 4),
+    "version": (0, 7),
+    "blender": (2, 7, 1),
     "location": "",
     "description": "MIDI for Blender",
     "warning": "",
-    "wiki_url": "http://www.jpfep.net/AddMIDI",
+    "wiki_url": "http://www.jpfep.net/en-us/pages/addmidi/",
     "tracker_url": "",
     "category": "System"}
 
@@ -109,18 +102,16 @@ def set_midiin(port):
     midiin = None
     midiin = rtmidi.MidiIn()
     if port != "None":
-        #midiin.close_port()
-        midiin.open_port(name=port)
-
+        midiin, portname = open_midiport(port=port, type_="input")
+        print ("Input: "+portname)
 
 def set_midiout(port):
     global midiout
-    #midiout.close_port()
     midiout = None
     midiout = rtmidi.MidiOut()
     if port != "None":
         midiout, portname = open_midiport(port=port, type_="output")
-        print (portname)
+        print ("Output: "+portname)
 
 def upd_settings_sub(n):
     text_settings = None
@@ -138,6 +129,8 @@ def upd_settings_sub(n):
         text_settings.lines[1].body = bpy.context.window_manager.midi_in_device
     elif n==2:
         text_settings.lines[2].body = bpy.context.window_manager.midi_out_device
+    elif n==3:
+        text_settings.lines[3].body = str(int(bpy.context.window_manager.rate))
 
 def upd_setting_0():
     upd_settings_sub(0)
@@ -147,6 +140,9 @@ def upd_setting_1():
         
 def upd_setting_2():
     upd_settings_sub(2)
+    
+def upd_setting_3():
+    upd_settings_sub(3)    
 
 #This to limit the sent values in a proper range
 def clamp(minimum, x, maximum):
@@ -187,12 +183,14 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                 msg = midiin.get_message()
                 while msg != None:
                     message, deltatime = msg
-                    timer += deltatime
-                    print("In :"+"@%0.6f %r" % (timer, message))
+                    
+                    #Uncomment to debug incoming messages
+                    #timer += deltatime
+                    #print("In :"+"@%0.6f %r" % (timer, message))
                     
                     msg = midiin.get_message()   #why this line is necessary (if not, infinite loop) ?
                     
-                                
+                    ''' LATER, MIDI Sync mode:           
                     #For the MIDI clock
                     if running_status== 1 and message[0] == 248:
                         clock += 1
@@ -210,7 +208,7 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                         frame = locbeat * beatframe
                         bpy.data.scenes["Scene"].frame_set(frame)
                         print ('JUMP TO FRAME ',frame)
-                    
+                    '''
                 
                     #For the MIDI controllers
                     for item in bpy.context.scene.MIDI_keys:
@@ -218,8 +216,10 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                         #New code for CC_7 and CC_14
                         chan = message[0]-175
                         cc   = message[1]
-                        val  = message[2]
-                        
+                        if len(message) > 2: 
+                            val  = message[2]
+                        else:
+                            val = 0
                         
                         if chan == item.channel:
                             
@@ -271,12 +271,13 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                                 exec(strtoexec)
                             if item.cont_type == 'vel':
                                 strtoexec = "bpy.data."+item.name + "=" + rescale(message[2],item.min,item.max,127)
-                                exec(strtoexec)                            
-                        #for the velocity
-                        '''elif (message[0]-143) == item.channel and message[2] != 0:
-                            strtoexec = "bpy.data."+item.name + "=" + rescale(message[1],item.min,item.max,127)
-                            exec(strtoexec)                    
-                        '''
+                                exec(strtoexec)
+                        #support for the native Note Off message        
+                        elif (message[0]-127) == item.channel:
+                            if item.cont_type == 'note_off' or item.cont_type == 'on_off':
+                                strtoexec = "bpy.data."+item.name + "=" + rescale(message[1],item.min,item.max,127)
+                                exec(strtoexec)
+                
             #if running_status == 1:
                 #frame = startpos + (clock / 48) * fps 
                 #bpy.ops.screen.animation_play()
@@ -340,11 +341,10 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
                             diff = item.max - item.min
                             diff2 = prop - item.min
                             value    = clamp(0,int( (diff2 / diff) * 16383),16383) 
-                            print (str(value))
                             value_6  = int (value / 127)
                             value_38 = value % 127
-                            midiout.send_message([chan,100,cont_101])
-                            midiout.send_message([chan,101,cont_100])
+                            midiout.send_message([chan,101,cont_101])
+                            midiout.send_message([chan,100,cont_100])
                             midiout.send_message([chan,6,value_6])                                              
                             midiout.send_message([chan,38,value_38])    
                                                 
@@ -371,7 +371,7 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
 
     def execute(self, context):
         context.window_manager.modal_handler_add(self)
-        self._timer = context.window_manager.event_timer_add(.1, context.window)
+        self._timer = context.window_manager.event_timer_add(bpy.context.window_manager.rate/1000, context.window)
         context.window_manager.addmidi_running = "Running"
         return {'RUNNING_MODAL'}
 
@@ -398,6 +398,7 @@ class AddMIDI_UIPanel(bpy.types.Panel):
         layout.prop(bpy.context.window_manager , "midi_in_device", text="Midi In")
         layout.prop(bpy.context.window_manager , "midi_out_device", text="Midi Out")
         layout.operator("addmidi.refresh_devices", text='Refresh the MIDI Devices List')
+        layout.prop(bpy.context.window_manager , "rate", text="Update rate(ms)")
         layout.prop(bpy.context.window_manager , "autorun", text="Start at launch")
         layout.separator()
         layout.operator("addmidi.importks", text='Import Keying Set')   
@@ -419,14 +420,16 @@ class AddMIDI_UIPanel(bpy.types.Panel):
                     box.prop(item, 'controller')
             col3 = box.column(align=True)
             row3 = col3.row(align=True)
-            row3.prop(item, 'min', text='low')
-            row3.prop(item, 'max', text='high')
+            row3.prop(item, 'min')
+            row3.prop(item, 'max')
 
-    def upd_trick(self,context):
+    def upd_trick_autorun(self,context):
         upd_setting_0()
+    def upd_trick_rate(self,context):
+        upd_setting_3()
     
-    bpy.types.WindowManager.autorun = bpy.props.BoolProperty(update=upd_trick)    
-             
+    bpy.types.WindowManager.autorun = bpy.props.BoolProperty(update=upd_trick_autorun)    
+    bpy.types.WindowManager.rate    = bpy.props.IntProperty(min=1,update=upd_trick_rate)         
         
 class AddMIDI_StartButton(bpy.types.Operator):
     bl_idname = "addmidi.start"
@@ -454,10 +457,6 @@ class AddMIDI_StopButton(bpy.types.Operator):
         return{'FINISHED'}
 
 
-
-
- 
-
 class AddMIDI_StopButton(bpy.types.Operator):
     bl_idname = "addmidi.refresh_devices"
     bl_label = "Refresh the list of MIDI devices"
@@ -479,7 +478,8 @@ class AddMIDI_StopButton(bpy.types.Operator):
         return b
        
     def refresh_devices(self):   
-        global midi_in_list, midi_out_list
+        global midi_in_list, midi_out_list, midiin, midiout
+                             
         b=[]
         a=("None","None", "None")
         b.append(a)
@@ -496,15 +496,12 @@ class AddMIDI_StopButton(bpy.types.Operator):
             b.append(a)
         midi_out_list = b
 
-    
-    
+   
     refresh_devices(0) #trick to be able to call the function
     bpy.types.WindowManager.midi_in_device = bpy.props.EnumProperty(name="MIDI In Ports", items=refresh_midi_in_devices, update=upd_midiin)   
     bpy.types.WindowManager.midi_out_device = bpy.props.EnumProperty(name = "MIDI Out Ports", items = refresh_midi_out_devices, update=upd_midiout)
 
     def execute(self, context):
-        midiin = None
-        midiout = None
         self.refresh_devices()          
         return{'FINISHED'}
 
@@ -710,6 +707,10 @@ def addmidi_handler(scene):
             except:
                 error_device = True
                 print("AddMIDI Error: MIDI Out device not found")
+            try:
+                bpy.context.window_manager.rate = int(text.lines[3].body) 
+            except:
+                bpy.context.window_manager.rate = 10
             
             if error_device == True:
                 bpy.context.window_manager.autorun = False
