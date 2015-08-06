@@ -378,6 +378,7 @@ class AddMIDI_ModalTimer(bpy.types.Operator):
     def cancel(self, context):
         context.window_manager.event_timer_remove(self._timer)
         context.window_manager.addmidi_running = "Stopped"
+        return {'CANCELLED'}
   
     
 class AddMIDI_UIPanel(bpy.types.Panel):
@@ -428,7 +429,7 @@ class AddMIDI_UIPanel(bpy.types.Panel):
         upd_setting_3()
     
     bpy.types.WindowManager.autorun = bpy.props.BoolProperty(update=upd_trick_autorun)    
-    bpy.types.WindowManager.rate    = bpy.props.IntProperty(min=1,update=upd_trick_rate)         
+    bpy.types.WindowManager.rate    = bpy.props.FloatProperty(min=.1,update=upd_trick_rate)         
         
 class AddMIDI_StartButton(bpy.types.Operator):
     bl_idname = "addmidi.start"
@@ -652,14 +653,15 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
             for items in ks.paths:               
                 if str(items.id) != "None":     #workaround to avoid bad ID Block (bug with Nodes)
                     
+                    #This is for customs properties that have brackets
                     if items.data_path[0:2] == '["' and items.data_path[-2:] == '"]':
-                        tvar = repr(items.id)[9:] + items.data_path
-                         
+                        tvar = repr(items.id)[9:] + items.data_path                         
                     else:
                         tvar = repr(items.id)[9:] + "." + items.data_path
                                            
                     tvar_ev = "bpy.data." + tvar
-                                  
+
+                    #Let's break tupple properties into several ones
                     if repr(type(eval(tvar_ev)))!="<class 'str'>":
                         try:
                             l=len(eval(tvar_ev)) 
@@ -672,9 +674,9 @@ class AddMIDI_Import_KS_button(bpy.types.Operator):
                             for i in range(j,k):
                                 tvar2 += tvar + "[" + str(i) + "]"+"\n"                                
                         except:
-                            tvar2 = tvar
+                            tvar2 = tvar+"\n"
                     else:
-                        tvar2 = tvar
+                        tvar2 = tvar+"\n"
                                       
                     for i in tvar2.split("\n")[:-1]:
                         my_item = bpy.context.scene.MIDI_keys.add()
