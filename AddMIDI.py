@@ -429,7 +429,7 @@ class AddMIDI_UIPanel(bpy.types.Panel):
         upd_setting_3()
     
     bpy.types.WindowManager.autorun = bpy.props.BoolProperty(update=upd_trick_autorun)    
-    bpy.types.WindowManager.rate    = bpy.props.FloatProperty(min=.1,update=upd_trick_rate)         
+    bpy.types.WindowManager.rate    = bpy.props.FloatProperty(min=.1,default=10,update=upd_trick_rate)         
         
 class AddMIDI_StartButton(bpy.types.Operator):
     bl_idname = "addmidi.start"
