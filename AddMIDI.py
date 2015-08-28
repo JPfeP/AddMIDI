@@ -53,7 +53,7 @@
 bl_info = {
     "name": "AddMIDI",
     "author": "JPfeP",
-    "version": (0, 7),
+    "version": (0, 8),
     "blender": (2, 7, 1),
     "location": "",
     "description": "MIDI for Blender",
@@ -130,7 +130,7 @@ def upd_settings_sub(n):
     elif n==2:
         text_settings.lines[2].body = bpy.context.window_manager.midi_out_device
     elif n==3:
-        text_settings.lines[3].body = str(int(bpy.context.window_manager.rate))
+        text_settings.lines[3].body = str(bpy.context.window_manager.rate)
 
 def upd_setting_0():
     upd_settings_sub(0)
@@ -697,7 +697,10 @@ def addmidi_handler(scene):
     global error_device
     for text in bpy.data.texts:
         if text.name == '.addmidi_settings':
-            bpy.context.window_manager.autorun = int(text.lines[0].body)
+            try:
+                bpy.context.window_manager.autorun = int(text.lines[0].body)
+            except:
+                pass
             try:
                 bpy.context.window_manager.midi_in_device  = text.lines[1].body
             except:
@@ -709,7 +712,7 @@ def addmidi_handler(scene):
                 error_device = True
                 print("AddMIDI Error: MIDI Out device not found")
             try:
-                bpy.context.window_manager.rate = int(text.lines[3].body) 
+                bpy.context.window_manager.rate = float(text.lines[3].body) 
             except:
                 bpy.context.window_manager.rate = 10
             
